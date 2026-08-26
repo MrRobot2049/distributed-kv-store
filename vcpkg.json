@@ -1,0 +1,11 @@
+{
+  "name": "distributed-kv-store",
+  "version": "0.1.0",
+  "dependencies": [
+    "grpc",
+    "rocksdb",
+    "spdlog",
+    "gtest",
+    "protobuf"
+  ]
+}
