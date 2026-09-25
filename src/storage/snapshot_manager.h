@@ -28,6 +28,8 @@ class SnapshotManager {
     std::string ReadSnapshotPayload(const std::filesystem::path& snapshot_path) const;
     std::filesystem::path RestoreSnapshotPayload(std::string_view payload,
                                                  LogIndex last_included_index) const;
+    void InstallSnapshotPayload(RocksDbStore& store, std::string_view payload,
+                                SnapshotMetadata metadata) const;
     static void PromoteRestoredSnapshot(const std::filesystem::path& restored_snapshot_path,
                                         const std::filesystem::path& live_db_path);
 

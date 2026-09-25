@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -30,6 +31,7 @@ class RaftNode {
                          core::AppendEntriesResponse* response);
     void OnInstallSnapshot(const core::InstallSnapshotRequest& request,
                            core::InstallSnapshotResponse* response);
+    void SetSnapshotInstaller(std::function<void(const core::InstallSnapshotRequest&)> installer);
     void Tick();
     void SendHeartbeats();
     bool SubmitCommand(std::string command);
@@ -77,6 +79,7 @@ class RaftNode {
     std::optional<NodeId> voted_for_;
     Role role_{Role::Follower};
     std::optional<NodeId> current_leader_;
+    std::function<void(const core::InstallSnapshotRequest&)> snapshot_installer_;
     std::chrono::steady_clock::time_point election_reset_at_{std::chrono::steady_clock::now()};
     mutable std::mutex state_mutex_;
 };

@@ -173,5 +173,40 @@ TEST_F(SnapshotManagerTest, PromotesRestoredSnapshotToClosedDatabasePath) {
     EXPECT_FALSE(std::filesystem::exists(target_db_path.string() + ".pre_snapshot"));
 }
 
+TEST_F(SnapshotManagerTest, InstallsPayloadIntoAnOpenStore) {
+    const std::filesystem::path source_db_path = root_path_ / "source_db";
+    const std::filesystem::path target_db_path = root_path_ / "target_db";
+    const std::filesystem::path snapshots_path = root_path_ / "snapshots";
+    const std::filesystem::path incoming_path = root_path_ / "incoming";
+
+    SnapshotManager manager(snapshots_path);
+    std::string payload;
+    {
+        RocksDbStore source_store(source_db_path);
+        source_store.Put("color", "blue");
+        source_store.SaveCommitIndex(12);
+        source_store.SaveLastApplied(12);
+        const auto snapshot_path = manager.CreateSnapshot(
+            source_store, SnapshotMetadata{.last_included_index = 12,
+                                           .last_included_term = 5});
+        payload = manager.ReadSnapshotPayload(snapshot_path);
+    }
+
+    RocksDbStore target_store(target_db_path);
+    target_store.Put("color", "red");
+    target_store.Put("stale", "value");
+    manager.InstallSnapshotPayload(
+        target_store, payload,
+        SnapshotMetadata{.last_included_index = 12, .last_included_term = 5});
+
+    EXPECT_EQ(target_store.Get("color"), std::optional<std::string>("blue"));
+    EXPECT_FALSE(target_store.Get("stale").has_value());
+    EXPECT_EQ(target_store.CommitIndex(), 12);
+    EXPECT_EQ(target_store.LastApplied(), 12);
+    EXPECT_EQ(target_store.LastIncludedIndex(), 12);
+    EXPECT_EQ(target_store.LastIncludedTerm(), 5);
+    EXPECT_FALSE(std::filesystem::exists(target_db_path.string() + ".pre_snapshot"));
+}
+
 }  // namespace
 }  // namespace raftkv

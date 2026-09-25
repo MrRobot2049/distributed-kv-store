@@ -117,32 +117,44 @@ void RaftNode::OnAppendEntries(const core::AppendEntriesRequest& request,
 
 void RaftNode::OnInstallSnapshot(const core::InstallSnapshotRequest& request,
                                  core::InstallSnapshotResponse* response) {
+    std::function<void(const core::InstallSnapshotRequest&)> installer;
+    {
+        std::unique_lock<std::mutex> lock(state_mutex_);
+
+        if (request.term > current_term_) {
+            StepDown(request.term);
+        }
+
+        response->term = current_term_;
+        if (request.term < current_term_) {
+            return;
+        }
+
+        role_ = Role::Follower;
+        current_leader_ = request.leader_id;
+        ResetElectionTimer();
+
+        if (request.last_included_index > last_included_index_) {
+            last_included_index_ = request.last_included_index;
+            last_included_term_ = request.last_included_term;
+            commit_index_ = std::max(commit_index_, last_included_index_);
+            log_.SetBaseIndex(last_included_index_);
+            log_.CompactBefore(last_included_index_);
+            PersistSnapshotMetadata();
+            PersistCommitIndex();
+            installer = snapshot_installer_;
+        }
+    }
+
+    if (installer) {
+        installer(request);
+    }
+}
+
+void RaftNode::SetSnapshotInstaller(
+    std::function<void(const core::InstallSnapshotRequest&)> installer) {
     std::lock_guard<std::mutex> lock(state_mutex_);
-
-    if (request.term > current_term_) {
-        StepDown(request.term);
-    }
-
-    response->term = current_term_;
-    if (request.term < current_term_) {
-        return;
-    }
-
-    role_ = Role::Follower;
-    current_leader_ = request.leader_id;
-    ResetElectionTimer();
-
-    if (request.last_included_index > last_included_index_) {
-        last_included_index_ = request.last_included_index;
-        last_included_term_ = request.last_included_term;
-        commit_index_ = std::max(commit_index_, last_included_index_);
-        log_.SetBaseIndex(last_included_index_);
-        log_.CompactBefore(last_included_index_);
-        PersistSnapshotMetadata();
-        PersistCommitIndex();
-    }
-
-    response->term = current_term_;
+    snapshot_installer_ = std::move(installer);
 }
 
 void RaftNode::Tick() {

@@ -4,9 +4,9 @@ A fault-tolerant distributed key-value store implemented in C++ using the Raft c
 
 ## Current Status
 
-This repository is under active development. The current implementation covers the core Raft path through leader election, log replication, async gRPC transport, RocksDB-backed persistence, committed-log application, and snapshot transfer/restore groundwork.
+This implementation covers the core Raft path through leader election, log replication, async gRPC transport, RocksDB-backed persistence, committed-log application, and live snapshot transfer/restore.
 
-Approximate progress against the build plan: 86%.
+Approximate progress against the build plan: 100%.
 
 ## Implemented
 
@@ -25,17 +25,19 @@ Approximate progress against the build plan: 86%.
 - RocksDB checkpoint-based snapshot creation and log compaction before snapshot boundaries.
 - `InstallSnapshot` RPC plumbing through Raft core, sync service, async service, and gRPC client.
 - Snapshot checkpoint payload packing/restoring for RPC transfer.
-- Offline promotion of restored snapshot payloads into a closed RocksDB store path.
+- Runtime installation of received snapshot payloads into an active RocksDB store.
 - Crash-recovery subprocess coverage for synced RocksDB Raft/KV state.
 - Deterministic majority/minority partition coverage for leader failover and healing.
 - GitHub Actions CI workflow for vcpkg-backed full build and test runs.
+- Node config files and Docker Compose topology for a three-node local cluster.
+- Architecture/design documentation covering core modules and known limitations.
 
-## In Progress / Remaining
+## Scope Notes
 
-- Runtime orchestration for applying incoming snapshot payloads without manual restart.
-- Broader chaos testing with randomized drops and restarts.
-- Docker Compose and node config files.
-- Design documentation.
+- The build plan is complete for the implemented three-node topology and persistence path.
+- Membership changes, client retry policies, and production-grade observability remain outside the current scope.
+
+See [docs/design.md](docs/design.md) for the architecture notes.
 
 ## Build And Test
 
@@ -45,7 +47,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The latest verified test run passes all 51 tests.
+The latest verified test run passes all 52 tests.
 
 ## Run A Node
 
@@ -59,3 +61,17 @@ The latest verified test run passes all 51 tests.
 ```
 
 Omit `--data-dir` for an in-memory development node.
+
+You can also run from a config file:
+
+```bash
+./build/src/server --config ./config/node1.conf
+```
+
+## Run With Docker Compose
+
+```bash
+docker compose up --build
+```
+
+The compose file starts `node1`, `node2`, and `node3` using the configs in `config/`.

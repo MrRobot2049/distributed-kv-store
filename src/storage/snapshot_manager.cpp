@@ -208,6 +208,16 @@ std::filesystem::path SnapshotManager::RestoreSnapshotPayload(
     return restored_path;
 }
 
+void SnapshotManager::InstallSnapshotPayload(RocksDbStore& store, std::string_view payload,
+                                             SnapshotMetadata metadata) const {
+    const std::filesystem::path restored_path =
+        RestoreSnapshotPayload(payload, metadata.last_included_index);
+    store.ReplaceFromDirectory(restored_path);
+    store.SaveSnapshotMetadata(metadata.last_included_index, metadata.last_included_term);
+    store.SaveCommitIndex(metadata.last_included_index);
+    store.SaveLastApplied(metadata.last_included_index);
+}
+
 void SnapshotManager::PromoteRestoredSnapshot(
     const std::filesystem::path& restored_snapshot_path,
     const std::filesystem::path& live_db_path) {

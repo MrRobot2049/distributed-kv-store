@@ -1,6 +1,8 @@
 #include <iostream>
 
 #ifdef RAFTKV_BUILD_GRPC_TRANSPORT
+#include <cctype>
+#include <fstream>
 #include <memory>
 #include <filesystem>
 #include <string>
@@ -20,6 +22,7 @@
 #ifdef RAFTKV_BUILD_ROCKSDB_STORAGE
 #include "storage/kv_command.h"
 #include "storage/rocksdb_store.h"
+#include "storage/snapshot_manager.h"
 #endif
 #include "storage/state_machine.h"
 #endif
@@ -30,7 +33,8 @@ namespace {
 void PrintUsage(const char* program_name) {
     std::cerr << "Usage: " << program_name
               << " --id <node-id> --listen <host:port>"
-              << " [--data-dir <path>] [--peer <node-id=host:port> ...]\n";
+              << " [--config <path>] [--data-dir <path>]"
+              << " [--peer <node-id=host:port> ...]\n";
 }
 
 bool ConsumeValue(int argc, char** argv, int* index, std::string* value) {
@@ -54,6 +58,86 @@ bool ParsePeer(std::string_view raw_peer, raftkv::PeerEndpoint* endpoint) {
     return true;
 }
 
+std::string_view Trim(std::string_view value) {
+    const auto is_space = [](unsigned char character) {
+        return std::isspace(character) != 0;
+    };
+
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.remove_prefix(1);
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.remove_suffix(1);
+    }
+    return value;
+}
+
+bool ApplyConfigLine(std::string_view line, std::string* node_id,
+                     std::string* listen_address, std::filesystem::path* data_dir,
+                     std::vector<raftkv::PeerEndpoint>* peer_endpoints) {
+    const std::size_t comment = line.find('#');
+    if (comment != std::string_view::npos) {
+        line = line.substr(0, comment);
+    }
+    line = Trim(line);
+    if (line.empty()) {
+        return true;
+    }
+
+    const std::size_t separator = line.find('=');
+    if (separator == std::string_view::npos || separator == 0) {
+        return false;
+    }
+
+    const std::string_view key = Trim(line.substr(0, separator));
+    const std::string_view value = Trim(line.substr(separator + 1));
+    if (key == "id") {
+        *node_id = std::string(value);
+        return !node_id->empty();
+    }
+    if (key == "listen") {
+        *listen_address = std::string(value);
+        return !listen_address->empty();
+    }
+    if (key == "data_dir") {
+        *data_dir = std::filesystem::path(std::string(value));
+        return !value.empty();
+    }
+    if (key == "peer") {
+        raftkv::PeerEndpoint endpoint;
+        if (!ParsePeer(value, &endpoint)) {
+            return false;
+        }
+        peer_endpoints->push_back(std::move(endpoint));
+        return true;
+    }
+
+    return false;
+}
+
+bool LoadConfigFile(const std::filesystem::path& config_path, std::string* node_id,
+                    std::string* listen_address, std::filesystem::path* data_dir,
+                    std::vector<raftkv::PeerEndpoint>* peer_endpoints) {
+    std::ifstream input(config_path);
+    if (!input) {
+        std::cerr << "Unable to open config file: " << config_path << "\n";
+        return false;
+    }
+
+    std::string line;
+    std::size_t line_number = 0;
+    while (std::getline(input, line)) {
+        ++line_number;
+        if (!ApplyConfigLine(line, node_id, listen_address, data_dir, peer_endpoints)) {
+            std::cerr << "Invalid config line " << line_number << " in "
+                      << config_path << ": " << line << "\n";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 }  // namespace
 #endif
 
@@ -74,6 +158,16 @@ int main(int argc, char** argv) {
         if (arg == "--id") {
             if (!ConsumeValue(argc, argv, &i, &node_id)) {
                 PrintUsage(argv[0]);
+                return 1;
+            }
+        } else if (arg == "--config") {
+            std::string config_path;
+            if (!ConsumeValue(argc, argv, &i, &config_path)) {
+                PrintUsage(argv[0]);
+                return 1;
+            }
+            if (!LoadConfigFile(config_path, &node_id, &listen_address, &data_dir,
+                                &peer_endpoints)) {
                 return 1;
             }
         } else if (arg == "--listen") {
@@ -130,14 +224,25 @@ int main(int argc, char** argv) {
     std::unique_ptr<raftkv::KeyValueStateMachine> state_machine;
     std::unique_ptr<raftkv::RaftNode> raft_node;
     std::unique_ptr<raftkv::RocksDbStore> persistent_store;
+    std::unique_ptr<raftkv::SnapshotManager> snapshot_manager;
     raftkv::GrpcPeerClient transport(peer_endpoints);
 #ifdef RAFTKV_BUILD_ROCKSDB_STORAGE
     if (!data_dir.empty()) {
         std::filesystem::create_directories(data_dir);
         persistent_store = std::make_unique<raftkv::RocksDbStore>(data_dir);
+        snapshot_manager = std::make_unique<raftkv::SnapshotManager>(
+            data_dir.string() + ".snapshots");
         raftkv::ReplayCommittedEntries(*persistent_store, *persistent_store, *persistent_store);
         raft_node = std::make_unique<raftkv::RaftNode>(
             node_id, std::move(peer_ids), transport, *persistent_store, persistent_store.get());
+        raft_node->SetSnapshotInstaller(
+            [store = persistent_store.get(), manager = snapshot_manager.get()](
+                const raftkv::core::InstallSnapshotRequest& request) {
+                manager->InstallSnapshotPayload(
+                    *store, request.data,
+                    raftkv::SnapshotMetadata{.last_included_index = request.last_included_index,
+                                             .last_included_term = request.last_included_term});
+            });
     } else {
         raft_node = std::make_unique<raftkv::RaftNode>(node_id, std::move(peer_ids), transport);
         state_machine = std::make_unique<raftkv::StateMachine>();

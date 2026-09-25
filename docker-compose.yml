@@ -1,0 +1,29 @@
+services:
+  node1:
+    build: .
+    command: ["--config", "/etc/raftkv/node1.conf"]
+    ports:
+      - "5001:5001"
+    volumes:
+      - node1-data:/var/lib/raftkv/node1
+
+  node2:
+    build: .
+    command: ["--config", "/etc/raftkv/node2.conf"]
+    ports:
+      - "5002:5002"
+    volumes:
+      - node2-data:/var/lib/raftkv/node2
+
+  node3:
+    build: .
+    command: ["--config", "/etc/raftkv/node3.conf"]
+    ports:
+      - "5003:5003"
+    volumes:
+      - node3-data:/var/lib/raftkv/node3
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:

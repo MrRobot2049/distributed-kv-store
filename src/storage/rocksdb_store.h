@@ -49,6 +49,7 @@ class RocksDbStore final : public RaftLog, public RaftMetadataStore, public KeyV
     std::optional<std::string> Get(const std::string& key) const override;
     void Delete(const std::string& key) override;
     void CreateCheckpoint(const std::filesystem::path& checkpoint_path) const;
+    void ReplaceFromDirectory(const std::filesystem::path& restored_db_path);
 
  private:
     static std::string IndexKey(LogIndex index);
@@ -57,6 +58,8 @@ class RocksDbStore final : public RaftLog, public RaftMetadataStore, public KeyV
     rocksdb::ColumnFamilyHandle* MetadataCf() const;
     rocksdb::ColumnFamilyHandle* RaftLogCf() const;
     rocksdb::ColumnFamilyHandle* KvDataCf() const;
+    void Open();
+    void Close();
 
     std::filesystem::path db_path_;
     std::unique_ptr<rocksdb::DB> db_;

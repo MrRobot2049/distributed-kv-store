@@ -93,6 +93,10 @@ std::vector<rocksdb::ColumnFamilyDescriptor> StoreColumnFamilies() {
 }  // namespace
 
 RocksDbStore::RocksDbStore(std::filesystem::path db_path) : db_path_(std::move(db_path)) {
+    Open();
+}
+
+void RocksDbStore::Open() {
     if (db_path_.has_parent_path()) {
         std::filesystem::create_directories(db_path_.parent_path());
     }
@@ -107,11 +111,17 @@ RocksDbStore::RocksDbStore(std::filesystem::path db_path) : db_path_(std::move(d
 }
 
 RocksDbStore::~RocksDbStore() {
+    Close();
+}
+
+void RocksDbStore::Close() {
     for (auto* column_family : column_families_) {
         if (column_family != nullptr) {
             db_->DestroyColumnFamilyHandle(column_family);
         }
     }
+    column_families_.clear();
+    db_.reset();
 }
 
 void RocksDbStore::Append(RaftLogEntry entry) {
@@ -364,6 +374,40 @@ void RocksDbStore::CreateCheckpoint(const std::filesystem::path& checkpoint_path
     std::unique_ptr<rocksdb::Checkpoint> checkpoint(raw_checkpoint);
     ThrowIfNotOk(checkpoint->CreateCheckpoint(checkpoint_path.string()),
                  "create rocksdb checkpoint");
+}
+
+void RocksDbStore::ReplaceFromDirectory(const std::filesystem::path& restored_db_path) {
+    if (!std::filesystem::exists(restored_db_path) ||
+        !std::filesystem::is_directory(restored_db_path)) {
+        throw std::runtime_error("restored database path does not exist");
+    }
+
+    const std::filesystem::path backup_path = db_path_.string() + ".pre_snapshot";
+    Close();
+    std::filesystem::remove_all(backup_path);
+
+    bool backup_created = false;
+    try {
+        if (std::filesystem::exists(db_path_)) {
+            std::filesystem::rename(db_path_, backup_path);
+            backup_created = true;
+        }
+        std::filesystem::rename(restored_db_path, db_path_);
+        Open();
+        std::filesystem::remove_all(backup_path);
+    } catch (...) {
+        if (db_ != nullptr) {
+            Close();
+        }
+        if (std::filesystem::exists(db_path_)) {
+            std::filesystem::remove_all(db_path_);
+        }
+        if (backup_created && std::filesystem::exists(backup_path)) {
+            std::filesystem::rename(backup_path, db_path_);
+        }
+        Open();
+        throw;
+    }
 }
 
 std::string RocksDbStore::IndexKey(LogIndex index) {
